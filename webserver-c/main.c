@@ -61,17 +61,34 @@ int main() {
             }
         }
 
-        char *reply;
+        char full_path[256];
+        snprintf(full_path, sizeof(full_path), "html%s", path);
 
-        if (strcmp(path, "/") == 0) {
-            reply = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHome Page";
-        } else if (strcmp(path, "/about") == 0) {
-            reply = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nAbout Page";
-        } else {
-            reply = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nNot Found";
+        if (path[strlen(path) - 1] == '/') {
+            size_t remaining_space = sizeof(full_path) - strlen(full_path) - 1;
+            strncat(full_path, "index.html", remaining_space);
         }
 
-        write(conn_fd, reply, strlen(reply));
+        FILE *fp = fopen(full_path, "r");
+        char *headers;
+
+        if (fp == NULL) {
+            fp = fopen("html/404.html", "r");
+            headers = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n";
+        } else {
+            headers = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
+        }
+
+        write(conn_fd, headers, strlen(headers));
+
+        char file_buf[1024];
+
+        size_t bytes_read;
+        while ((bytes_read = fread(file_buf, 1, sizeof(file_buf), fp)) > 0) {
+            write(conn_fd, file_buf, bytes_read);
+        }
+
+        fclose(fp);
         close(conn_fd);
     }
 
