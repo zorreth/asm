@@ -4,6 +4,43 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
+#include <arpa/inet.h>
+
+typedef enum {
+    TYPE_NOT_FOUND = -1,
+    TYPE_FILE = 1,
+    TYPE_DIR = 2
+} PathType;
+
+PathType pathtype(char *path) {
+    struct stat path_stat;
+
+    if (stat(path, &path_stat) == 0) {
+        if (S_ISREG(path_stat.st_mode)) {
+            return TYPE_FILE;
+        } else if (S_ISDIR(path_stat.st_mode)) {
+            return TYPE_DIR;
+        }
+    }
+
+    return TYPE_NOT_FOUND;
+}
+
+void log_request(char *path, struct sockaddr_in client_addr) {
+    time_t current_time;
+    time(&current_time);
+
+    char fmt_time[48];
+    struct tm *tmp = localtime(&current_time);
+
+    strftime(fmt_time, sizeof(fmt_time), "%Y-%m-%d %H:%M:%S", tmp);
+
+    char addr[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, addr, INET_ADDRSTRLEN);
+
+    printf("%s %s %s\n", fmt_time, path, addr);
+}
 
 void serve(int sock_fd) {
     struct sockaddr_in client_addr;
@@ -50,38 +87,49 @@ void serve(int sock_fd) {
         }
 
         char full_path[256];
+        snprintf(full_path, sizeof(full_path), "html%s", path);
 
-        size_t path_len = strlen(path);
-        if (path_len > 0 && path[path_len - 1] == '/') {
-            snprintf(full_path, sizeof(full_path), "html%sindex.html", path);
-        } else {
-            snprintf(full_path, sizeof(full_path), "html%s", path);
+        PathType type = pathtype(full_path);
+
+        if (type == TYPE_DIR) {
+            size_t current_len = strlen(full_path);
+            size_t remaining_space = sizeof(full_path) - strlen(full_path) - 1;
+
+            if (full_path[current_len - 1] == '/') {
+                strncat(full_path, "index.html", remaining_space);
+            } else {
+                strncat(full_path, "/index.html", remaining_space);
+            }
+
+            type = pathtype(full_path);
         }
 
         FILE *fp = NULL;
         char *headers;
-        struct stat file_stat;
-
-        if (stat(full_path, &file_stat) != 0 || S_ISDIR(file_stat.st_mode)) {
+        
+        if (type == TYPE_NOT_FOUND) {
             fp = fopen("html/404.html", "r");
             headers = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n";
-        } else {
+        } else if (type == TYPE_FILE) {
             fp = fopen(full_path, "r");
-
             if (fp == NULL) {
                 fp = fopen("html/403.html", "r");
                 headers = "HTTP/1.1 403 Forbidden\r\nContent-Type: text/html\r\n\r\n";
             } else {
                 headers = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
-            }            
+            }  
         }
+
+        log_request(full_path, client_addr);
 
         write(conn_fd, headers, strlen(headers));
 
         char file_buf[1024];
 
-        while ((bytes_read = fread(file_buf, 1, sizeof(file_buf), fp)) > 0) {
-            write(conn_fd, file_buf, bytes_read);
+        if (fp != NULL) {
+            while ((bytes_read = fread(file_buf, 1, sizeof(file_buf), fp)) > 0) {
+                write(conn_fd, file_buf, bytes_read);
+            }
         }
 
         fclose(fp);
